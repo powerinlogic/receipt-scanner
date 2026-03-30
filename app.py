@@ -1,0 +1,354 @@
+"""
+app.py — Flask web server + REST API for the Receipt Scanner.
+Run: python app.py
+"""
+
+import csv
+import io
+import logging
+import os
+import threading
+from datetime import datetime
+from pathlib import Path
+
+from flask import (
+    Flask,
+    abort,
+    jsonify,
+    request,
+    send_file,
+    send_from_directory,
+    render_template,
+)
+
+import database
+import processor
+import watcher
+from config import ORIGINALS_DIR, THUMBNAILS_DIR, WATCH_FOLDER, CATEGORIES
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+app = Flask(__name__)
+app.config["JSON_SORT_KEYS"] = False
+
+
+# ── Startup ──────────────────────────────────────────────────────────────────
+
+@app.before_request
+def _startup():
+    # Flask calls this once per request, guard with a flag
+    pass
+
+
+def _init():
+    database.init_db()
+    watcher.start()
+    logger.info("Receipt Scanner ready at http://127.0.0.1:5000")
+
+
+# ── Pages ────────────────────────────────────────────────────────────────────
+
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+
+@app.route("/receipt/<int:rid>")
+def receipt_detail_page(rid):
+    return render_template("detail.html", receipt_id=rid)
+
+
+# ── Static assets (receipts) ─────────────────────────────────────────────────
+
+@app.route("/receipts/originals/<path:filename>")
+def serve_original(filename):
+    return send_from_directory(ORIGINALS_DIR, filename)
+
+
+@app.route("/receipts/thumbnails/<path:filename>")
+def serve_thumbnail(filename):
+    return send_from_directory(THUMBNAILS_DIR, filename)
+
+
+# ── API: Stats ───────────────────────────────────────────────────────────────
+
+@app.route("/api/stats")
+def api_stats():
+    return jsonify(database.get_stats())
+
+
+# ── API: Receipts ────────────────────────────────────────────────────────────
+
+@app.route("/api/receipts")
+def api_list_receipts():
+    rows, total = database.list_receipts(
+        search=request.args.get("search"),
+        card_last4=request.args.get("card"),
+        category=request.args.get("category"),
+        date_from=request.args.get("date_from"),
+        date_to=request.args.get("date_to"),
+        sort_by=request.args.get("sort_by", "date"),
+        sort_dir=request.args.get("sort_dir", "desc"),
+        page=int(request.args.get("page", 1)),
+        per_page=int(request.args.get("per_page", 50)),
+    )
+    return jsonify({"receipts": rows, "total": total})
+
+
+@app.route("/api/receipts/<int:rid>")
+def api_get_receipt(rid):
+    receipt = database.get_receipt(rid)
+    if not receipt:
+        abort(404)
+    items = database.get_items(rid)
+    receipt["items"] = items
+    return jsonify(receipt)
+
+
+@app.route("/api/receipts/<int:rid>", methods=["PUT"])
+def api_update_receipt(rid):
+    receipt = database.get_receipt(rid)
+    if not receipt:
+        abort(404)
+
+    body = request.get_json(force=True) or {}
+    allowed = {
+        "vendor_name", "date", "card_last4", "card_type",
+        "total_amount", "category", "notes",
+    }
+    update = {k: v for k, v in body.items() if k in allowed}
+    if update:
+        database.update_receipt(rid, update)
+
+    if "items" in body:
+        database.replace_items(rid, body["items"])
+
+    receipt = database.get_receipt(rid)
+    receipt["items"] = database.get_items(rid)
+    return jsonify(receipt)
+
+
+@app.route("/api/receipts/<int:rid>", methods=["DELETE"])
+def api_delete_receipt(rid):
+    receipt = database.get_receipt(rid)
+    if not receipt:
+        abort(404)
+
+    # Remove image files
+    for path_key in ("stored_path", "thumbnail_path"):
+        p = receipt.get(path_key)
+        if p and os.path.isfile(p):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+    database.delete_receipt(rid)
+    return jsonify({"ok": True})
+
+
+# ── API: Cards & Categories ───────────────────────────────────────────────────
+
+@app.route("/api/cards")
+def api_cards():
+    return jsonify(database.get_cards())
+
+
+@app.route("/api/categories")
+def api_categories():
+    return jsonify(CATEGORIES)
+
+
+# ── API: Watcher / Scan ───────────────────────────────────────────────────────
+
+@app.route("/api/status")
+def api_status():
+    status = processor.get_status()
+    status["watching"] = watcher.is_running()
+    status["watch_folder"] = watcher.get_watch_folder()
+    return jsonify(status)
+
+
+@app.route("/api/scan", methods=["POST"])
+def api_scan():
+    """Trigger a manual scan of the watch folder."""
+    body = request.get_json(silent=True) or {}
+    target = body.get("folder") or watcher.get_watch_folder()
+
+    def _run():
+        results = processor.scan_folder(target)
+        logger.info("Manual scan complete: %s", results)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"ok": True, "folder": target})
+
+
+@app.route("/api/watch-folder", methods=["POST"])
+def api_set_watch_folder():
+    body = request.get_json(force=True) or {}
+    folder = body.get("folder", "").strip()
+    if not folder:
+        return jsonify({"error": "folder required"}), 400
+    if not os.path.isdir(folder):
+        return jsonify({"error": f"Folder not found: {folder}"}), 400
+    watcher.set_watch_folder(folder)
+    return jsonify({"ok": True, "folder": folder})
+
+
+# ── API: Export ───────────────────────────────────────────────────────────────
+
+def _build_export_rows(rows):
+    """Flatten receipts to CSV/XLSX rows."""
+    out = []
+    for r in rows:
+        out.append(
+            {
+                "ID": r["id"],
+                "Vendor": r.get("vendor_name") or "",
+                "Date": r.get("date") or "",
+                "Amount": r.get("total_amount") or "",
+                "Card Type": r.get("card_type") or "",
+                "Card Last 4": r.get("card_last4") or "",
+                "Category": r.get("category") or "",
+                "Items Preview": r.get("items_preview") or "",
+            }
+        )
+    return out
+
+
+def _get_filtered_rows():
+    rows, _ = database.list_receipts(
+        search=request.args.get("search"),
+        card_last4=request.args.get("card"),
+        category=request.args.get("category"),
+        date_from=request.args.get("date_from"),
+        date_to=request.args.get("date_to"),
+        sort_by=request.args.get("sort_by", "date"),
+        sort_dir=request.args.get("sort_dir", "desc"),
+        per_page=10000,
+    )
+    return rows
+
+
+@app.route("/api/export/csv")
+def api_export_csv():
+    rows = _get_filtered_rows()
+    export_rows = _build_export_rows(rows)
+    buf = io.StringIO()
+    if export_rows:
+        writer = csv.DictWriter(buf, fieldnames=export_rows[0].keys())
+        writer.writeheader()
+        writer.writerows(export_rows)
+    buf.seek(0)
+    return send_file(
+        io.BytesIO(buf.getvalue().encode("utf-8-sig")),
+        mimetype="text/csv",
+        as_attachment=True,
+        download_name=f"receipts_{datetime.now().strftime('%Y%m%d')}.csv",
+    )
+
+
+@app.route("/api/export/xlsx")
+def api_export_xlsx():
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+
+    rows = _get_filtered_rows()
+    export_rows = _build_export_rows(rows)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Receipts"
+
+    if export_rows:
+        headers = list(export_rows[0].keys())
+        ws.append(headers)
+        header_fill = PatternFill("solid", fgColor="6366F1")
+        header_font = Font(color="FFFFFF", bold=True)
+        for cell in ws[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center")
+
+        for row in export_rows:
+            ws.append(list(row.values()))
+
+        for col in ws.columns:
+            max_len = max(len(str(cell.value or "")) for cell in col)
+            ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 50)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return send_file(
+        buf,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True,
+        download_name=f"receipts_{datetime.now().strftime('%Y%m%d')}.xlsx",
+    )
+
+
+@app.route("/api/export/pdf")
+def api_export_pdf():
+    from fpdf import FPDF
+
+    rows = _get_filtered_rows()
+
+    pdf = FPDF(orientation="L", unit="mm", format="A4")
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(0, 10, "Receipt Export", ln=True, align="C")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(0, 6, f"Generated {datetime.now().strftime('%Y-%m-%d %H:%M')}", ln=True, align="C")
+    pdf.ln(4)
+
+    headers = ["ID", "Vendor", "Date", "Amount", "Card", "Category"]
+    col_w = [15, 70, 25, 25, 30, 30]
+
+    pdf.set_fill_color(99, 102, 241)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 9)
+    for h, w in zip(headers, col_w):
+        pdf.cell(w, 8, h, border=1, fill=True)
+    pdf.ln()
+
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Helvetica", "", 8)
+    fill = False
+    for r in rows:
+        pdf.set_fill_color(243, 244, 246) if fill else pdf.set_fill_color(255, 255, 255)
+        card = ""
+        if r.get("card_type") and r.get("card_last4"):
+            card = f"{r['card_type']} -{r['card_last4']}"
+        amt = f"${r['total_amount']:.2f}" if r.get("total_amount") is not None else ""
+        vals = [
+            str(r["id"]),
+            (r.get("vendor_name") or "")[:40],
+            r.get("date") or "",
+            amt,
+            card,
+            r.get("category") or "",
+        ]
+        for v, w in zip(vals, col_w):
+            pdf.cell(w, 7, v, border=1, fill=True)
+        pdf.ln()
+        fill = not fill
+
+    buf = io.BytesIO(pdf.output())
+    return send_file(
+        buf,
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"receipts_{datetime.now().strftime('%Y%m%d')}.pdf",
+    )
+
+
+# ── Run ───────────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    _init()
+    app.run(host="127.0.0.1", port=5000, debug=False, use_reloader=False)

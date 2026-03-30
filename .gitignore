@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+receipts.db
+receipts.db-shm
+receipts.db-wal
+receipts/originals/
+receipts/thumbnails/

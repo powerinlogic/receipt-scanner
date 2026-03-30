@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Receipt Detail — Receipt Scanner</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body class="detail-page">
+
+<header class="app-header">
+  <div class="header-left">
+    <a href="/" class="btn btn-ghost btn-sm back-btn">
+      <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path fill-rule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clip-rule="evenodd"/></svg>
+      Back
+    </a>
+    <div class="app-logo">R</div>
+    <span class="app-title">Receipt Scanner</span>
+  </div>
+  <div class="header-right">
+    <button class="btn btn-ghost" id="btn-print-detail" onclick="window.print()">
+      <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path fill-rule="evenodd" d="M5 4v3H4a2 2 0 00-2 2v5a2 2 0 002 2h1v2a1 1 0 001 1h8a1 1 0 001-1v-2h1a2 2 0 002-2V9a2 2 0 00-2-2h-1V4a1 1 0 00-1-1H6a1 1 0 00-1 1zm2 0h6v3H7V4zm-1 9H5v-2h1v2zm9-2v2h-1v-2h1zm-7 4V13h4v2H9z" clip-rule="evenodd"/></svg>
+      Print
+    </button>
+    <button class="btn btn-danger" id="btn-delete">
+      <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zm0 2h2l.5 1H8.5L9 4zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clip-rule="evenodd"/></svg>
+      Delete Receipt
+    </button>
+  </div>
+</header>
+
+<div class="detail-layout" id="detail-layout">
+  <!-- Loading state -->
+  <div class="detail-loading" id="detail-loading">
+    <div class="spinner"></div>
+  </div>
+
+  <!-- Left: image viewer -->
+  <aside class="detail-image-panel" id="detail-image-panel" style="display:none">
+    <div class="image-viewer" id="image-viewer">
+      <img id="receipt-img" src="" alt="Receipt image" />
+    </div>
+    <div class="image-controls">
+      <button class="btn btn-ghost btn-sm" id="btn-zoom-in">
+        <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path fill-rule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clip-rule="evenodd"/></svg>
+        Zoom In
+      </button>
+      <button class="btn btn-ghost btn-sm" id="btn-zoom-out">
+        <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path fill-rule="evenodd" d="M5 10a1 1 0 011-1h8a1 1 0 110 2H6a1 1 0 01-1-1z" clip-rule="evenodd"/></svg>
+        Zoom Out
+      </button>
+      <button class="btn btn-ghost btn-sm" id="btn-zoom-reset">Reset</button>
+    </div>
+  </aside>
+
+  <!-- Right: data panel -->
+  <section class="detail-data-panel" id="detail-data-panel" style="display:none">
+    <div class="detail-section">
+      <div class="detail-section-header">
+        <h2 class="detail-section-title">Receipt Details</h2>
+        <div class="detail-status-badge" id="detail-status"></div>
+      </div>
+
+      <div class="field-grid">
+        <div class="field-group">
+          <label class="field-label">Vendor Name</label>
+          <input type="text" class="field-input" id="f-vendor" placeholder="Vendor name" />
+        </div>
+        <div class="field-group">
+          <label class="field-label">Date</label>
+          <input type="date" class="field-input" id="f-date" />
+        </div>
+        <div class="field-group">
+          <label class="field-label">Total Amount</label>
+          <div class="input-prefix-wrap">
+            <span class="input-prefix">$</span>
+            <input type="number" step="0.01" min="0" class="field-input field-input-prefix" id="f-amount" placeholder="0.00" />
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label">Category</label>
+          <select class="field-input" id="f-category">
+            <option value="">— Select —</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label class="field-label">Card Type</label>
+          <select class="field-input" id="f-card-type">
+            <option value="">Unknown</option>
+            <option value="Visa">Visa</option>
+            <option value="Mastercard">Mastercard</option>
+            <option value="Discover">Discover</option>
+            <option value="Amex">Amex</option>
+            <option value="Debit">Debit</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label class="field-label">Card Last 4</label>
+          <input type="text" class="field-input" id="f-card-last4" maxlength="4" placeholder="e.g. 4712" />
+        </div>
+        <div class="field-group field-group-full">
+          <label class="field-label">Notes</label>
+          <textarea class="field-input field-textarea" id="f-notes" rows="2" placeholder="Optional notes…"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <!-- Line items -->
+    <div class="detail-section">
+      <div class="detail-section-header">
+        <h2 class="detail-section-title">Line Items</h2>
+        <button class="btn btn-ghost btn-sm" id="btn-add-item">+ Add Item</button>
+      </div>
+
+      <table class="items-table">
+        <thead>
+          <tr>
+            <th>Description</th>
+            <th class="col-narrow">Qty</th>
+            <th class="col-narrow">Unit Price</th>
+            <th class="col-narrow">Total</th>
+            <th class="col-action"></th>
+          </tr>
+        </thead>
+        <tbody id="items-tbody"></tbody>
+        <tfoot>
+          <tr>
+            <td colspan="3" class="items-total-label">Total</td>
+            <td class="items-total-value" id="items-total-cell">—</td>
+            <td></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <div class="detail-actions">
+      <a href="/" class="btn btn-ghost">Cancel</a>
+      <button class="btn btn-primary" id="btn-save">Save Changes</button>
+    </div>
+  </section>
+</div>
+
+<!-- ── Full image lightbox ─────────────────────────────────────────────────── -->
+<div class="lightbox" id="lightbox" style="display:none">
+  <button class="lightbox-close" id="lightbox-close">&times;</button>
+  <img id="lightbox-img" src="" alt="Receipt full size" />
+</div>
+
+<div id="toast" class="toast" style="display:none"></div>
+
+<script>
+  // Inject receipt ID from Flask template
+  window.RECEIPT_ID = {{ receipt_id }};
+</script>
+<script src="/static/js/detail.js"></script>
+</body>
+</html>
