@@ -87,6 +87,7 @@ function renderAll() {
 
   loadCategories();
   renderItems(receipt.items || []);
+  loadDetailFolders();
   updateTitle();
 }
 
@@ -181,11 +182,73 @@ async function save() {
   }
 }
 
+// ── Folders ───────────────────────────────────────────────────────────────────
+async function loadDetailFolders() {
+  const [folders, currentIds] = await Promise.all([
+    fetch('/api/folders').then(r => r.json()),
+    fetch(`/api/receipts/${RID}/folders`).then(r => r.json()),
+  ]);
+
+  const container = $('detail-folder-list');
+  if (!folders.length) {
+    container.innerHTML = '<span style="color:var(--text-muted);font-size:13px">No folders created yet.</span>';
+    return;
+  }
+
+  container.innerHTML = folders.map(f => `
+    <label class="detail-folder-item">
+      <input type="checkbox" value="${f.id}" ${currentIds.includes(f.id) ? 'checked' : ''} />
+      <span class="folder-dot" style="background:${escHtml(f.color)}"></span>
+      <span>${escHtml(f.name)}</span>
+    </label>`
+  ).join('');
+
+  container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener('change', async () => {
+      const checked = Array.from(container.querySelectorAll('input:checked')).map(c => parseInt(c.value));
+      await fetch(`/api/receipts/${RID}/folders`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder_ids: checked }),
+      });
+      showToast('Folders updated.', 'success');
+    });
+  });
+}
+
+// ── Go back (preserving list state) ──────────────────────────────────────────
+function goBack() {
+  // If browser history has a previous page in this session, use it
+  // so the URL hash (filters/page/search) is restored automatically
+  if (document.referrer && document.referrer.includes(location.host) && history.length > 1) {
+    history.back();
+  } else {
+    window.location.href = '/';
+  }
+}
+
+// ── Hide ──────────────────────────────────────────────────────────────────────
+async function hideReceipt() {
+  const btn = $('btn-hide');
+  btn.disabled = true;
+  const res = await fetch(`/api/receipts/${RID}/hide`, { method: 'POST' });
+  if (res.ok) {
+    // Tell the list page to refresh its data (needed for bfcache restores)
+    sessionStorage.setItem('lastViewedReceipt', RID);
+    sessionStorage.setItem('receiptListNeedsRefresh', '1');
+    goBack();
+  } else {
+    showToast('Hide failed.', 'error');
+    btn.disabled = false;
+  }
+}
+
 // ── Delete ────────────────────────────────────────────────────────────────────
 async function deleteReceipt() {
   if (!confirm('Permanently delete this receipt and its image? This cannot be undone.')) return;
   const res = await fetch(`/api/receipts/${RID}`, { method: 'DELETE' });
   if (res.ok) {
+    sessionStorage.setItem('receiptListNeedsRefresh', '1');
     window.location.href = '/';
   } else {
     showToast('Delete failed.', 'error');
@@ -211,8 +274,19 @@ function closeLightbox() {
 // ── Events ────────────────────────────────────────────────────────────────────
 function wireEvents() {
   $('btn-save').addEventListener('click', save);
+  $('btn-hide').addEventListener('click', hideReceipt);
   $('btn-delete').addEventListener('click', deleteReceipt);
   $('btn-add-item').addEventListener('click', addBlankItem);
+
+  // Back and Cancel buttons — use history.back() to preserve list state
+  document.querySelector('.back-btn').addEventListener('click', e => {
+    e.preventDefault();
+    goBack();
+  });
+  $('btn-cancel').addEventListener('click', e => {
+    e.preventDefault();
+    goBack();
+  });
 
   // Zoom controls
   $('btn-zoom-in').addEventListener('click',    () => { zoomLevel = Math.min(zoomLevel + 0.25, 3); applyZoom(); });

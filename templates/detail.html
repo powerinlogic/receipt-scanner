@@ -22,6 +22,10 @@
       <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path fill-rule="evenodd" d="M5 4v3H4a2 2 0 00-2 2v5a2 2 0 002 2h1v2a1 1 0 001 1h8a1 1 0 001-1v-2h1a2 2 0 002-2V9a2 2 0 00-2-2h-1V4a1 1 0 00-1-1H6a1 1 0 00-1 1zm2 0h6v3H7V4zm-1 9H5v-2h1v2zm9-2v2h-1v-2h1zm-7 4V13h4v2H9z" clip-rule="evenodd"/></svg>
       Print
     </button>
+    <button class="btn btn-ghost" id="btn-hide">
+      <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path fill-rule="evenodd" d="M3.707 2.293a1 1 0 00-1.414 1.414l14 14a1 1 0 001.414-1.414l-1.473-1.473A10.014 10.014 0 0019.542 10C18.268 5.943 14.478 3 10 3a9.958 9.958 0 00-4.512 1.074l-1.78-1.781zm4.261 4.26l1.514 1.515a2.003 2.003 0 012.45 2.45l1.514 1.514a4 4 0 00-5.478-5.478z" clip-rule="evenodd"/><path d="M12.454 16.697L9.75 13.992a4 4 0 01-3.742-3.741L2.335 6.578A9.98 9.98 0 00.458 10c1.274 4.057 5.065 7 9.542 7 .847 0 1.669-.105 2.454-.303z"/></svg>
+      Hide
+    </button>
     <button class="btn btn-danger" id="btn-delete">
       <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zm0 2h2l.5 1H8.5L9 4zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clip-rule="evenodd"/></svg>
       Delete Receipt
@@ -133,8 +137,18 @@
       </table>
     </div>
 
+    <!-- Folders -->
+    <div class="detail-section">
+      <div class="detail-section-header">
+        <h2 class="detail-section-title">Folders</h2>
+      </div>
+      <div id="detail-folder-list" class="detail-folder-list">
+        <span style="color:var(--text-muted);font-size:13px">Loading…</span>
+      </div>
+    </div>
+
     <div class="detail-actions">
-      <a href="/" class="btn btn-ghost">Cancel</a>
+      <a href="/" class="btn btn-ghost" id="btn-cancel">Cancel</a>
       <button class="btn btn-primary" id="btn-save">Save Changes</button>
     </div>
   </section>

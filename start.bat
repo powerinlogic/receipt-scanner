@@ -40,10 +40,14 @@ if not errorlevel 1 (
 )
 
 echo.
+echo Stopping any existing Receipt Scanner processes...
+taskkill /F /IM python.exe /T >nul 2>&1
+timeout /t 1 /nobreak >nul
+
 echo Starting Receipt Scanner at http://127.0.0.1:5000
 echo Press Ctrl+C to stop.
 echo.
-start "" http://127.0.0.1:5000
+start /b cmd /c "timeout /t 3 /nobreak >nul && start "" http://127.0.0.1:5000"
 python app.py
 
 pause

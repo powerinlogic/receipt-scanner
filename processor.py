@@ -125,13 +125,21 @@ def process_file(source_path: str) -> str:
         return "error"
 
     items = data.pop("items", [])
-    data["status"] = "processed"
+    is_receipt = data.pop("is_purchase_receipt", True)
+    document_type = data.pop("document_type", "other")
+
+    if is_receipt:
+        data["status"] = "processed"
+    else:
+        data["status"] = "review"
+        logger.info("Non-receipt detected (type=%s) → review queue: id=%d", document_type, rid)
+
     data["processed_at"] = datetime.now(timezone.utc).isoformat()
     database.update_receipt(rid, data)
     database.insert_items(rid, items)
     _last_scan = datetime.now(timezone.utc)
-    logger.info("Processed receipt id=%d vendor=%s total=%s", rid, data.get("vendor_name"), data.get("total_amount"))
-    return "processed"
+    logger.info("Processed receipt id=%d vendor=%s total=%s status=%s", rid, data.get("vendor_name"), data.get("total_amount"), data["status"])
+    return "processed" if is_receipt else "review"
 
 
 def scan_folder(folder: str) -> dict:
@@ -142,7 +150,7 @@ def scan_folder(folder: str) -> dict:
             return {"status": "already_running"}
         _processing = True
 
-    results = {"processed": 0, "not_receipt": 0, "duplicate": 0, "error": 0, "not_image": 0}
+    results = {"processed": 0, "review": 0, "not_receipt": 0, "duplicate": 0, "error": 0, "not_image": 0}
     try:
         for root, dirs, files in os.walk(folder):
             for fname in files:

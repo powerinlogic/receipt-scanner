@@ -37,11 +37,15 @@ _MEDIA_TYPES = {
 }
 
 _PROMPT = """\
-You are a receipt data extraction assistant. Analyze this receipt image carefully and return ONLY a valid JSON object — no markdown, no explanation, just the raw JSON.
+You are a receipt data extraction assistant. Analyze this image carefully and return ONLY a valid JSON object — no markdown, no explanation, just the raw JSON.
+
+FIRST — determine if this is a purchase receipt or invoice (a document showing items/services bought and the amount paid). Things that are NOT purchase receipts: bank deposit slips, checks, delivery manifests, screenshots of software, random photos, letters, etc.
 
 Extract these fields:
 
 {
+  "is_purchase_receipt": true,
+  "document_type": "receipt | invoice | deposit_slip | check | delivery_slip | screenshot | other",
   "vendor_name": "Full store/restaurant/service name as printed",
   "date": "YYYY-MM-DD (null if not found)",
   "card_last4": "Last 4 digits of the payment card as a string, null if cash or not shown",
@@ -59,12 +63,14 @@ Extract these fields:
 }
 
 Rules:
+- is_purchase_receipt: true ONLY for actual purchase receipts, invoices, or bills showing items bought and money paid
 - total_amount is the final amount paid (after tax, discounts, tips)
 - If an item quantity is not shown, use 1
 - If unit_price cannot be determined, set it to null
 - If there are no line items visible, return an empty items array
 - All monetary values must be numbers (no $ sign)
 - date must be null if you cannot determine it with confidence
+- Even if is_purchase_receipt is false, still extract whatever fields you can
 
 OCR context (may contain errors — use image as primary source):
 {ocr_text}"""
@@ -170,6 +176,8 @@ def _sanitize(data: dict) -> dict:
         )
 
     return {
+        "is_purchase_receipt": bool(data.get("is_purchase_receipt", True)),
+        "document_type": str(data.get("document_type") or "other").strip().lower(),
         "vendor_name": (str(data.get("vendor_name") or "").strip() or None),
         "date": (str(data.get("date") or "").strip() or None),
         "card_last4": (str(data.get("card_last4") or "").strip()[-4:] or None)

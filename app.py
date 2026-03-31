@@ -26,6 +26,14 @@ import processor
 import watcher
 from config import ORIGINALS_DIR, THUMBNAILS_DIR, WATCH_FOLDER, CATEGORIES
 
+def _parse_multi(val, sep="|"):
+    """Parse a pipe-separated query param into a list, or None."""
+    if not val:
+        return None
+    items = [v.strip() for v in val.split(sep) if v.strip()]
+    return items or None
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
@@ -78,6 +86,26 @@ def serve_thumbnail(filename):
 
 @app.route("/api/stats")
 def api_stats():
+    fid = request.args.get("folder_id")
+    filter_keys = ["search", "cards", "vendors", "category", "date_from", "date_to",
+                   "folder_id", "missing", "show_hidden"]
+    has_filters = any(request.args.get(k) for k in filter_keys)
+    if has_filters:
+        stats = database.get_filtered_stats(
+            search=request.args.get("search"),
+            cards=_parse_multi(request.args.get("cards")),
+            vendors=_parse_multi(request.args.get("vendors")),
+            category=request.args.get("category"),
+            date_from=request.args.get("date_from"),
+            date_to=request.args.get("date_to"),
+            folder_id=int(fid) if fid else None,
+            show_hidden=request.args.get("show_hidden") == "1",
+            missing=request.args.get("missing"),
+        )
+        global_stats = database.get_stats()
+        stats["pending"] = global_stats["pending"]
+        stats["review"]  = global_stats["review"]
+        return jsonify(stats)
     return jsonify(database.get_stats())
 
 
@@ -85,9 +113,11 @@ def api_stats():
 
 @app.route("/api/receipts")
 def api_list_receipts():
+    fid = request.args.get("folder_id")
     rows, total = database.list_receipts(
         search=request.args.get("search"),
-        card_last4=request.args.get("card"),
+        cards=_parse_multi(request.args.get("cards")),
+        vendors=_parse_multi(request.args.get("vendors")),
         category=request.args.get("category"),
         date_from=request.args.get("date_from"),
         date_to=request.args.get("date_to"),
@@ -95,6 +125,9 @@ def api_list_receipts():
         sort_dir=request.args.get("sort_dir", "desc"),
         page=int(request.args.get("page", 1)),
         per_page=int(request.args.get("per_page", 50)),
+        show_hidden=request.args.get("show_hidden") == "1",
+        folder_id=int(fid) if fid else None,
+        missing=request.args.get("missing"),
     )
     return jsonify({"receipts": rows, "total": total})
 
@@ -151,6 +184,24 @@ def api_delete_receipt(rid):
     return jsonify({"ok": True})
 
 
+@app.route("/api/receipts/<int:rid>/hide", methods=["POST"])
+def api_hide_receipt(rid):
+    receipt = database.get_receipt(rid)
+    if not receipt:
+        abort(404)
+    database.update_receipt(rid, {"status": "hidden"})
+    return jsonify({"ok": True})
+
+
+@app.route("/api/receipts/<int:rid>/unhide", methods=["POST"])
+def api_unhide_receipt(rid):
+    receipt = database.get_receipt(rid)
+    if not receipt:
+        abort(404)
+    database.update_receipt(rid, {"status": "processed"})
+    return jsonify({"ok": True})
+
+
 # ── API: Cards & Categories ───────────────────────────────────────────────────
 
 @app.route("/api/cards")
@@ -158,9 +209,152 @@ def api_cards():
     return jsonify(database.get_cards())
 
 
+@app.route("/api/cards/merge", methods=["POST"])
+def api_merge_card():
+    body = request.get_json(silent=True) or {}
+    card_last4 = body.get("card_last4", "").strip()
+    card_type  = body.get("card_type", "").strip() or None
+    if not card_last4:
+        return jsonify({"error": "card_last4 required"}), 400
+    updated = database.merge_card(card_last4, card_type)
+    return jsonify({"ok": True, "updated": updated})
+
+
+@app.route("/api/vendors")
+def api_vendors():
+    return jsonify(database.get_vendors())
+
+
 @app.route("/api/categories")
 def api_categories():
     return jsonify(CATEGORIES)
+
+
+# ── API: Folders ─────────────────────────────────────────────────────────────
+
+@app.route("/api/folders")
+def api_list_folders():
+    return jsonify(database.get_folders())
+
+
+@app.route("/api/folders", methods=["POST"])
+def api_create_folder():
+    body = request.get_json(silent=True) or {}
+    name = (body.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "name required"}), 400
+    fid = database.create_folder(
+        name=name,
+        parent_id=body.get("parent_id"),
+        color=body.get("color", "#6366f1"),
+    )
+    return jsonify({"id": fid, "name": name})
+
+
+@app.route("/api/folders/<int:fid>", methods=["PUT"])
+def api_update_folder(fid):
+    body = request.get_json(silent=True) or {}
+    database.update_folder(fid, body)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/folders/<int:fid>", methods=["DELETE"])
+def api_delete_folder(fid):
+    database.delete_folder(fid)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/receipts/<int:rid>/folders")
+def api_get_receipt_folders(rid):
+    return jsonify(database.get_receipt_folder_ids(rid))
+
+
+@app.route("/api/receipts/<int:rid>/folders", methods=["PUT"])
+def api_set_receipt_folders(rid):
+    body = request.get_json(silent=True) or {}
+    folder_ids = body.get("folder_ids", [])
+    database.set_receipt_folders(rid, folder_ids)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/folders/<int:fid>/tag-results", methods=["POST"])
+def api_bulk_tag(fid):
+    """Tag all receipts matching the posted filter params with a folder."""
+    body = request.get_json(silent=True) or {}
+    receipt_ids = database.get_all_receipt_ids_for_filter(
+        search=body.get("search"),
+        cards=body.get("cards"),   # already a list from JS
+        vendors=body.get("vendors"),
+        category=body.get("category"),
+        date_from=body.get("date_from"),
+        date_to=body.get("date_to"),
+        folder_id=int(body["folder_id"]) if body.get("folder_id") else None,
+    )
+    database.bulk_tag_folder(fid, receipt_ids)
+    return jsonify({"ok": True, "tagged": len(receipt_ids)})
+
+
+# ── API: Bulk operations ──────────────────────────────────────────────────────
+
+@app.route("/api/receipts/bulk-update", methods=["POST"])
+def api_bulk_update_receipts():
+    body = request.get_json(silent=True) or {}
+    ids = body.get("ids", [])
+    data = body.get("data", {})
+    if not ids or not data:
+        return jsonify({"error": "ids and data required"}), 400
+    database.bulk_update_receipts(ids, data)
+    return jsonify({"ok": True, "updated": len(ids)})
+
+
+@app.route("/api/receipts/bulk-tag", methods=["POST"])
+def api_bulk_tag_receipts():
+    body = request.get_json(silent=True) or {}
+    ids = body.get("ids", [])
+    folder_id = body.get("folder_id")
+    if not ids or not folder_id:
+        return jsonify({"error": "ids and folder_id required"}), 400
+    database.bulk_tag_folder(int(folder_id), ids)
+    return jsonify({"ok": True, "tagged": len(ids)})
+
+
+# ── API: Review Queue ─────────────────────────────────────────────────────────
+
+@app.route("/api/review")
+def api_review_queue():
+    rows = database.list_review_queue()
+    return jsonify(rows)
+
+
+@app.route("/api/review/<int:rid>/approve", methods=["POST"])
+def api_review_approve(rid):
+    """Move a review item into the main receipt list."""
+    receipt = database.get_receipt(rid)
+    if not receipt:
+        abort(404)
+    if receipt["status"] != "review":
+        return jsonify({"error": "Receipt is not in review queue"}), 400
+    database.update_receipt(rid, {"status": "processed"})
+    return jsonify({"ok": True})
+
+
+@app.route("/api/review/<int:rid>/dismiss", methods=["POST"])
+def api_review_dismiss(rid):
+    """Dismiss a review item — removes it and its image files."""
+    receipt = database.get_receipt(rid)
+    if not receipt:
+        abort(404)
+    if receipt["status"] != "review":
+        return jsonify({"error": "Receipt is not in review queue"}), 400
+    for path_key in ("stored_path", "thumbnail_path"):
+        p = receipt.get(path_key)
+        if p and os.path.isfile(p):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+    database.delete_receipt(rid)
+    return jsonify({"ok": True})
 
 
 # ── API: Watcher / Scan ───────────────────────────────────────────────────────
@@ -221,15 +415,19 @@ def _build_export_rows(rows):
 
 
 def _get_filtered_rows():
+    fid = request.args.get("folder_id")
     rows, _ = database.list_receipts(
         search=request.args.get("search"),
-        card_last4=request.args.get("card"),
+        cards=_parse_multi(request.args.get("cards")),
+        vendors=_parse_multi(request.args.get("vendors")),
         category=request.args.get("category"),
         date_from=request.args.get("date_from"),
         date_to=request.args.get("date_to"),
         sort_by=request.args.get("sort_by", "date"),
         sort_dir=request.args.get("sort_dir", "desc"),
         per_page=10000,
+        folder_id=int(fid) if fid else None,
+        missing=request.args.get("missing"),
     )
     return rows
 
