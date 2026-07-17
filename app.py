@@ -63,6 +63,9 @@ def _require_auth():
     header = request.headers.get("Authorization", "")
     if AGENT_API_TOKEN and header == f"Bearer {AGENT_API_TOKEN}":
         return None
+    # Header-less clients (Claude's fetch proxy) may pass the token as a query param
+    if AGENT_API_TOKEN and request.args.get("token", "") == AGENT_API_TOKEN:
+        return None
     if APP_PASSWORD and header.startswith("Basic "):
         try:
             decoded = base64.b64decode(header.split(" ", 1)[1]).decode("utf-8")
