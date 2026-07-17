@@ -35,6 +35,7 @@ import time
 
 from config import (
     DATA_DIR,
+    DRIVE_LOOKBACK_DAYS,
     DRIVE_POLL_INTERVAL_MINUTES,
     GOOGLE_DRIVE_CREDENTIALS_FILE,
     GOOGLE_DRIVE_CREDENTIALS_JSON,
@@ -93,6 +94,35 @@ def _save_state(state: dict):
     os.replace(tmp, STATE_PATH)
 
 
+# ── Folder tree ──────────────────────────────────────────────────────────────
+
+def _all_folder_ids(service, root_id: str) -> list[str]:
+    """Root folder plus every descendant subfolder (BFS)."""
+    ids = [root_id]
+    frontier = [root_id]
+    while frontier:
+        current, frontier = frontier, []
+        for i in range(0, len(current), 8):
+            chunk = current[i:i + 8]
+            parents_q = " or ".join(f"'{fid}' in parents" for fid in chunk)
+            q = (f"({parents_q}) and trashed = false "
+                 "and mimeType = 'application/vnd.google-apps.folder'")
+            page_token = None
+            while True:
+                resp = service.files().list(
+                    q=q, fields="nextPageToken, files(id, name)",
+                    pageSize=200, pageToken=page_token,
+                ).execute()
+                for f in resp.get("files", []):
+                    if f["id"] not in ids:
+                        ids.append(f["id"])
+                        frontier.append(f["id"])
+                page_token = resp.get("nextPageToken")
+                if not page_token:
+                    break
+    return ids
+
+
 # ── Polling ──────────────────────────────────────────────────────────────────
 
 def poll_once() -> dict:
@@ -111,23 +141,38 @@ def poll_once() -> dict:
         service = _get_service()
         os.makedirs(INBOX_DIR, exist_ok=True)
 
-        page_token = None
+        # The sync folder nests photos in subfolders (Camera, Screenshots,
+        # receipts folders, ...). Walk the whole tree, like the old local
+        # watchdog did with recursive=True.
+        folder_ids = _all_folder_ids(service, GOOGLE_DRIVE_FOLDER_ID)
+
+        cutoff = ""
+        if DRIVE_LOOKBACK_DAYS > 0:
+            from datetime import datetime, timedelta, timezone as _tz
+            cutoff_dt = datetime.now(_tz.utc) - timedelta(days=DRIVE_LOOKBACK_DAYS)
+            cutoff = cutoff_dt.strftime("%Y-%m-%dT%H:%M:%S")
+
         files = []
-        while True:
-            resp = service.files().list(
-                q=(
-                    f"'{GOOGLE_DRIVE_FOLDER_ID}' in parents "
-                    "and trashed = false and mimeType contains 'image/'"
-                ),
-                fields="nextPageToken, files(id, name, mimeType, size, createdTime)",
-                pageSize=200,
-                pageToken=page_token,
-                orderBy="createdTime",
-            ).execute()
-            files.extend(resp.get("files", []))
-            page_token = resp.get("nextPageToken")
-            if not page_token:
-                break
+        CHUNK = 8  # parents per query; keeps the q string well under limits
+        for i in range(0, len(folder_ids), CHUNK):
+            chunk = folder_ids[i:i + CHUNK]
+            parents_q = " or ".join(f"'{fid}' in parents" for fid in chunk)
+            q = f"({parents_q}) and trashed = false and mimeType contains 'image/'"
+            if cutoff:
+                q += f" and createdTime > '{cutoff}'"
+            page_token = None
+            while True:
+                resp = service.files().list(
+                    q=q,
+                    fields="nextPageToken, files(id, name, mimeType, size, createdTime)",
+                    pageSize=200,
+                    pageToken=page_token,
+                    orderBy="createdTime",
+                ).execute()
+                files.extend(resp.get("files", []))
+                page_token = resp.get("nextPageToken")
+                if not page_token:
+                    break
 
         summary["listed"] = len(files)
 

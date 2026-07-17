@@ -13,6 +13,10 @@ GOOGLE_DRIVE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_FOLDER_ID", "")
 GOOGLE_DRIVE_CREDENTIALS_FILE = os.environ.get("GOOGLE_DRIVE_CREDENTIALS_FILE", os.path.join(BASE_DIR, "credentials.json"))
 GOOGLE_DRIVE_CREDENTIALS_JSON = os.environ.get("GOOGLE_DRIVE_CREDENTIALS_JSON", "")
 DRIVE_POLL_INTERVAL_MINUTES = int(os.environ.get("DRIVE_POLL_INTERVAL_MINUTES", "10"))
+# Only ingest images created within this many days (0 = no limit). Keeps the
+# first poll from downloading years of camera roll; older files are marked
+# seen without downloading.
+DRIVE_LOOKBACK_DAYS = int(os.environ.get("DRIVE_LOOKBACK_DAYS", "90"))
 
 # Legacy local-folder mode (Drive for Desktop mount on the host machine)
 WATCH_FOLDER = os.environ.get("WATCH_FOLDER", r"G:\My Drive\Mobile Photo Sync")
