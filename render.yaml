@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: receipt-scanner
+    runtime: docker
+    plan: starter  # needed for the persistent disk
+    disk:
+      name: receipt-data
+      mountPath: /var/data
+      sizeGB: 5
+    envVars:
+      - key: DATA_DIR
+        value: /var/data
+      - key: DRIVE_POLL_INTERVAL_MINUTES
+        value: "10"
+      # Set these manually in the Render dashboard:
+      # - ANTHROPIC_API_KEY
+      # - GOOGLE_DRIVE_FOLDER_ID           (Mobile Photo Sync folder)
+      # - GOOGLE_DRIVE_CREDENTIALS_JSON    (paste full service-account JSON)
+      # - APP_PASSWORD                     (REQUIRED — protects all receipts)
+      # - AGENT_API_TOKEN                  (Claude automation read access)
