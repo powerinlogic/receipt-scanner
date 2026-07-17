@@ -483,3 +483,40 @@ def merge_card(card_last4: str, card_type: str) -> int:
     affected = cur.rowcount
     conn.close()
     return affected
+
+
+# ── Agent summary (Claude automations) ───────────────────────────────────────
+
+def get_monthly_category_totals(months: int = 3) -> list:
+    """Spend by month and category for the last `months` calendar months."""
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT substr(date, 1, 7) AS month,
+                  COALESCE(category, 'Uncategorized') AS category,
+                  ROUND(SUM(total_amount), 2) AS total,
+                  COUNT(*) AS receipts
+           FROM receipts
+           WHERE status = 'processed'
+             AND date IS NOT NULL
+             AND date >= date('now', 'start of month', ?)
+           GROUP BY month, category
+           ORDER BY month DESC, total DESC""",
+        (f"-{months - 1} months",),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_recent_receipts(limit: int = 20) -> list:
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT id, date, vendor_name, total_amount, category,
+                  card_last4, card_type, status
+           FROM receipts
+           WHERE status = 'processed'
+           ORDER BY COALESCE(date, created_at) DESC
+           LIMIT ?""",
+        (limit,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]

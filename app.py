@@ -21,10 +21,23 @@ from flask import (
     render_template,
 )
 
+import base64
+import secrets
+
 import database
 import processor
 import watcher
 from config import ORIGINALS_DIR, THUMBNAILS_DIR, WATCH_FOLDER, CATEGORIES
+
+# ── Access control (opt-in via env) ──────────────────────────────────────────
+# APP_PASSWORD:    when set, every request needs HTTP Basic auth (any username).
+#                  REQUIRED for a public deploy — without it, all receipts,
+#                  card digits, and spend data are open to the internet.
+# AGENT_API_TOKEN: when set, requests may instead present
+#                  "Authorization: Bearer <token>" (used by Claude automations).
+# When neither is set (local dev), no auth is enforced.
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
+AGENT_API_TOKEN = os.environ.get("AGENT_API_TOKEN", "")
 
 def _parse_multi(val, sep="|"):
     """Parse a pipe-separated query param into a list, or None."""
@@ -41,6 +54,27 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+@app.before_request
+def _require_auth():
+    if not APP_PASSWORD and not AGENT_API_TOKEN:
+        return None  # local dev, auth disabled
+    header = request.headers.get("Authorization", "")
+    if AGENT_API_TOKEN and header == f"Bearer {AGENT_API_TOKEN}":
+        return None
+    if APP_PASSWORD and header.startswith("Basic "):
+        try:
+            decoded = base64.b64decode(header.split(" ", 1)[1]).decode("utf-8")
+            _user, _, pw = decoded.partition(":")
+            if secrets.compare_digest(pw, APP_PASSWORD):
+                return None
+        except Exception:
+            pass
+    resp = jsonify({"error": "authentication required"})
+    resp.status_code = 401
+    resp.headers["WWW-Authenticate"] = 'Basic realm="Receipt Scanner"'
+    return resp
+
 app.config["JSON_SORT_KEYS"] = False
 
 
@@ -83,6 +117,19 @@ def serve_thumbnail(filename):
 
 
 # ── API: Stats ───────────────────────────────────────────────────────────────
+
+@app.route("/api/agent/summary")
+def api_agent_summary():
+    """Compact read-only summary for Claude automations (Monday brief,
+    Command Center, QuickBooks reconciliation)."""
+    stats = database.get_stats()
+    return jsonify({
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "stats": stats,
+        "monthly_category_totals": database.get_monthly_category_totals(months=3),
+        "recent_receipts": database.get_recent_receipts(limit=25),
+    })
+
 
 @app.route("/api/stats")
 def api_stats():
