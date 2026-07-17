@@ -34,7 +34,7 @@ import threading
 import time
 
 from config import (
-    BASE_DIR,
+    DATA_DIR,
     DRIVE_POLL_INTERVAL_MINUTES,
     GOOGLE_DRIVE_CREDENTIALS_FILE,
     GOOGLE_DRIVE_CREDENTIALS_JSON,
@@ -45,7 +45,7 @@ from config import (
 
 logger = logging.getLogger(__name__)
 
-STATE_PATH = os.path.join(BASE_DIR, "drive_state.json")
+STATE_PATH = os.path.join(DATA_DIR, "drive_state.json")
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
 _thread: threading.Thread | None = None

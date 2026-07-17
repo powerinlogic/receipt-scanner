@@ -614,6 +614,10 @@ def api_export_pdf():
 
 # ── Run ───────────────────────────────────────────────────────────────────────
 
+# Initialize at import time so production servers (gunicorn) also get the
+# database and the watcher thread. _init() is idempotent: init_db() is
+# CREATE-IF-NOT-EXISTS and both watchers no-op when already running.
+_init()
+
 if __name__ == "__main__":
-    _init()
     app.run(host="127.0.0.1", port=5000, debug=False, use_reloader=False)

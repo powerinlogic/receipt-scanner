@@ -17,11 +17,16 @@ DRIVE_POLL_INTERVAL_MINUTES = int(os.environ.get("DRIVE_POLL_INTERVAL_MINUTES", 
 # Legacy local-folder mode (Drive for Desktop mount on the host machine)
 WATCH_FOLDER = os.environ.get("WATCH_FOLDER", r"G:\My Drive\Mobile Photo Sync")
 
-RECEIPTS_DIR = os.path.join(BASE_DIR, "receipts")
+# DATA_DIR: where the database and receipt images live. Locally this is the
+# project folder; on Render set DATA_DIR=/var/data and attach a persistent
+# disk there, or every deploy wipes the database and images.
+DATA_DIR = os.environ.get("DATA_DIR", BASE_DIR)
+
+RECEIPTS_DIR = os.path.join(DATA_DIR, "receipts")
 ORIGINALS_DIR = os.path.join(RECEIPTS_DIR, "originals")
 THUMBNAILS_DIR = os.path.join(RECEIPTS_DIR, "thumbnails")
 INBOX_DIR = os.path.join(RECEIPTS_DIR, "inbox")
-DB_PATH = os.path.join(BASE_DIR, "receipts.db")
+DB_PATH = os.path.join(DATA_DIR, "receipts.db")
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
