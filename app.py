@@ -25,9 +25,10 @@ import base64
 import secrets
 
 import database
+import drive_watcher
 import processor
 import watcher
-from config import ORIGINALS_DIR, THUMBNAILS_DIR, WATCH_FOLDER, CATEGORIES
+from config import GOOGLE_DRIVE_FOLDER_ID, ORIGINALS_DIR, THUMBNAILS_DIR, WATCH_FOLDER, CATEGORIES
 
 # ── Access control (opt-in via env) ──────────────────────────────────────────
 # APP_PASSWORD:    when set, every request needs HTTP Basic auth (any username).
@@ -88,7 +89,12 @@ def _startup():
 
 def _init():
     database.init_db()
-    watcher.start()
+    if GOOGLE_DRIVE_FOLDER_ID:
+        drive_watcher.start()
+        logger.info("Ingestion mode: Google Drive API (folder %s)", GOOGLE_DRIVE_FOLDER_ID)
+    else:
+        watcher.start()
+        logger.info("Ingestion mode: local folder watchdog (%s)", WATCH_FOLDER)
     logger.info("Receipt Scanner ready at http://127.0.0.1:5000")
 
 
@@ -409,15 +415,29 @@ def api_review_dismiss(rid):
 @app.route("/api/status")
 def api_status():
     status = processor.get_status()
-    status["watching"] = watcher.is_running()
-    status["watch_folder"] = watcher.get_watch_folder()
+    if GOOGLE_DRIVE_FOLDER_ID:
+        status["watching"] = drive_watcher.is_running()
+        status["watch_folder"] = f"Google Drive folder {GOOGLE_DRIVE_FOLDER_ID}"
+        status["drive"] = drive_watcher.get_status()
+    else:
+        status["watching"] = watcher.is_running()
+        status["watch_folder"] = watcher.get_watch_folder()
     return jsonify(status)
 
 
 @app.route("/api/scan", methods=["POST"])
 def api_scan():
-    """Trigger a manual scan of the watch folder."""
+    """Trigger a manual scan (Drive poll in drive mode, folder scan otherwise)."""
     body = request.get_json(silent=True) or {}
+
+    if GOOGLE_DRIVE_FOLDER_ID and not body.get("folder"):
+        def _run_drive():
+            results = drive_watcher.poll_once()
+            logger.info("Manual Drive poll complete: %s", results)
+
+        threading.Thread(target=_run_drive, daemon=True).start()
+        return jsonify({"ok": True, "folder": f"Google Drive folder {GOOGLE_DRIVE_FOLDER_ID}"})
+
     target = body.get("folder") or watcher.get_watch_folder()
 
     def _run():
