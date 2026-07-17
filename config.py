@@ -43,6 +43,10 @@ THUMBNAIL_SIZE = (280, 360)
 # Supported image extensions
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".tiff", ".bmp"}
 
+# Ensure storage directories exist (fresh deploys have none of them)
+for _d in (RECEIPTS_DIR, ORIGINALS_DIR, THUMBNAILS_DIR, INBOX_DIR):
+    os.makedirs(_d, exist_ok=True)
+
 # Categories available for assignment
 CATEGORIES = [
     "Shopping",
