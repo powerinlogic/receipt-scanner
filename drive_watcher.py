@@ -210,6 +210,12 @@ def poll_once() -> dict:
                 # not_receipt are normal); hash-dedupe is the backstop.
                 seen.add(f["id"])
 
+                # Persist progress every few files so a crash or restart
+                # mid-backlog resumes instead of starting over.
+                if summary["processed"] % 5 == 0:
+                    state["seen_ids"] = list(seen)
+                    _save_state(state)
+
                 # The processor copies originals into ORIGINALS_DIR;
                 # remove the inbox copy if it's still there.
                 try:

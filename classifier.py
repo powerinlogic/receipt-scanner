@@ -125,11 +125,20 @@ def _score_text(text: str) -> int:
     return score
 
 
+# Cap the working resolution. Modern phone photos are 12-48MP; running
+# them through preprocessing + tesseract at full size spikes hundreds of
+# MB and OOM-kills small containers (Render starter = 512MB). Receipt
+# text OCRs reliably at this size.
+MAX_OCR_DIMENSION = 2200
+
+
 def _open_image(path: str) -> Image.Image:
-    """Open an image, apply EXIF rotation, convert to RGB."""
+    """Open an image, apply EXIF rotation, downscale, convert to RGB."""
     img = Image.open(path)
     # Apply EXIF orientation (critical for phone photos)
     img = ImageOps.exif_transpose(img)
+    if max(img.size) > MAX_OCR_DIMENSION:
+        img.thumbnail((MAX_OCR_DIMENSION, MAX_OCR_DIMENSION), Image.LANCZOS)
     if img.mode not in ("RGB", "L"):
         img = img.convert("RGB")
     return img
