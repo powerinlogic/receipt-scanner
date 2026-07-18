@@ -9,7 +9,10 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Preferred: Google Drive API polling (works anywhere — no Drive for Desktop
 # mount needed). Set GOOGLE_DRIVE_FOLDER_ID to enable; the legacy local
 # WATCH_FOLDER watchdog is used only when the folder ID is unset.
+# One or more Drive folder IDs, comma-separated (e.g. camera roll + a
+# digital "Invoices" folder for vendor/Faire/Amazon PDFs)
 GOOGLE_DRIVE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_FOLDER_ID", "")
+GOOGLE_DRIVE_FOLDER_IDS = [f.strip() for f in GOOGLE_DRIVE_FOLDER_ID.split(",") if f.strip()]
 GOOGLE_DRIVE_CREDENTIALS_FILE = os.environ.get("GOOGLE_DRIVE_CREDENTIALS_FILE", os.path.join(BASE_DIR, "credentials.json"))
 GOOGLE_DRIVE_CREDENTIALS_JSON = os.environ.get("GOOGLE_DRIVE_CREDENTIALS_JSON", "")
 DRIVE_POLL_INTERVAL_MINUTES = int(os.environ.get("DRIVE_POLL_INTERVAL_MINUTES", "10"))

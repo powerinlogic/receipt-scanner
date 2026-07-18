@@ -40,6 +40,7 @@ from config import (
     GOOGLE_DRIVE_CREDENTIALS_FILE,
     GOOGLE_DRIVE_CREDENTIALS_JSON,
     GOOGLE_DRIVE_FOLDER_ID,
+    GOOGLE_DRIVE_FOLDER_IDS,
     IMAGE_EXTENSIONS,
     INBOX_DIR,
 )
@@ -96,10 +97,10 @@ def _save_state(state: dict):
 
 # ── Folder tree ──────────────────────────────────────────────────────────────
 
-def _all_folder_ids(service, root_id: str) -> list[str]:
-    """Root folder plus every descendant subfolder (BFS)."""
-    ids = [root_id]
-    frontier = [root_id]
+def _all_folder_ids(service, root_ids: list[str]) -> list[str]:
+    """Root folders plus every descendant subfolder (BFS)."""
+    ids = list(root_ids)
+    frontier = list(root_ids)
     while frontier:
         current, frontier = frontier, []
         for i in range(0, len(current), 8):
@@ -123,6 +124,33 @@ def _all_folder_ids(service, root_id: str) -> list[str]:
     return ids
 
 
+# ── PDF rendering ────────────────────────────────────────────────────────────
+
+MAX_PDF_PAGES = 4  # first pages carry the totals; ignore long statements' tails
+
+
+def _pdf_to_images(pdf_path: str) -> list[str]:
+    """Render up to MAX_PDF_PAGES of a PDF to JPEGs next to it."""
+    try:
+        from pdf2image import convert_from_path
+    except ImportError:
+        logger.warning("pdf2image not installed — PDF skipped: %s", pdf_path)
+        return []
+    try:
+        pages = convert_from_path(pdf_path, dpi=200, fmt="jpeg",
+                                  first_page=1, last_page=MAX_PDF_PAGES)
+    except Exception:
+        logger.exception("PDF render failed: %s", pdf_path)
+        return []
+    out = []
+    base = os.path.splitext(pdf_path)[0]
+    for i, page in enumerate(pages, 1):
+        p = f"{base}_p{i}.jpg"
+        page.save(p, "JPEG", quality=90)
+        out.append(p)
+    return out
+
+
 # ── Polling ──────────────────────────────────────────────────────────────────
 
 def poll_once() -> dict:
@@ -144,7 +172,7 @@ def poll_once() -> dict:
         # The sync folder nests photos in subfolders (Camera, Screenshots,
         # receipts folders, ...). Walk the whole tree, like the old local
         # watchdog did with recursive=True.
-        folder_ids = _all_folder_ids(service, GOOGLE_DRIVE_FOLDER_ID)
+        folder_ids = _all_folder_ids(service, GOOGLE_DRIVE_FOLDER_IDS)
 
         cutoff = ""
         if DRIVE_LOOKBACK_DAYS > 0:
@@ -157,7 +185,8 @@ def poll_once() -> dict:
         for i in range(0, len(folder_ids), CHUNK):
             chunk = folder_ids[i:i + CHUNK]
             parents_q = " or ".join(f"'{fid}' in parents" for fid in chunk)
-            q = f"({parents_q}) and trashed = false and mimeType contains 'image/'"
+            q = (f"({parents_q}) and trashed = false and "
+                 "(mimeType contains 'image/' or mimeType = 'application/pdf')")
             if cutoff:
                 q += f" and createdTime > '{cutoff}'"
             page_token = None
@@ -185,7 +214,8 @@ def poll_once() -> dict:
 
             name = f.get("name", f["id"])
             ext = os.path.splitext(name)[1].lower()
-            if ext and ext not in IMAGE_EXTENSIONS:
+            is_pdf = ext == ".pdf" or f.get("mimeType") == "application/pdf"
+            if ext and not is_pdf and ext not in IMAGE_EXTENSIONS:
                 seen.add(f["id"])
                 summary["skipped"] += 1
                 continue
@@ -202,9 +232,22 @@ def poll_once() -> dict:
                         _status, done = downloader.next_chunk()
                 summary["downloaded"] += 1
 
-                result = processor.process_file(local_path)
-                summary["processed"] += 1
-                logger.info("Drive file %s -> %s", name, result)
+                if is_pdf:
+                    # Vendor/Faire/Amazon invoices arrive as PDFs: render
+                    # pages to images and run each through the pipeline.
+                    for page_path in _pdf_to_images(local_path):
+                        result = processor.process_file(page_path)
+                        summary["processed"] += 1
+                        logger.info("Drive PDF %s page -> %s", name, result)
+                        try:
+                            if os.path.exists(page_path):
+                                os.remove(page_path)
+                        except OSError:
+                            pass
+                else:
+                    result = processor.process_file(local_path)
+                    summary["processed"] += 1
+                    logger.info("Drive file %s -> %s", name, result)
 
                 # Mark seen regardless of processor outcome (duplicate /
                 # not_receipt are normal); hash-dedupe is the backstop.
@@ -254,7 +297,7 @@ def _loop():
 
 def start():
     global _thread
-    if not GOOGLE_DRIVE_FOLDER_ID:
+    if not GOOGLE_DRIVE_FOLDER_IDS:
         logger.warning("GOOGLE_DRIVE_FOLDER_ID not set; drive watcher not started")
         return
     if _thread and _thread.is_alive():
@@ -281,6 +324,7 @@ def get_status() -> dict:
     return {
         "mode": "drive",
         "folder_id": GOOGLE_DRIVE_FOLDER_ID,
+        "folder_ids": GOOGLE_DRIVE_FOLDER_IDS,
         "poll_interval_minutes": DRIVE_POLL_INTERVAL_MINUTES,
         "last_poll": _last_poll,
         "last_error": _last_error,
