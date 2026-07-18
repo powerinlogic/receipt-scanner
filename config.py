@@ -50,6 +50,14 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".tiff",
 for _d in (RECEIPTS_DIR, ORIGINALS_DIR, THUMBNAILS_DIR, INBOX_DIR):
     os.makedirs(_d, exist_ok=True)
 
+# ── Commerce7 read-only proxy ────────────────────────────────────────────────
+# Lets Claude's automations reach the C7 API through this app (their fetch
+# proxy cannot reach api.commerce7.com directly). GET-only; guarded by the
+# same APP_PASSWORD/AGENT_API_TOKEN auth as everything else.
+C7_APP_ID = os.environ.get("C7_APP_ID", "")
+C7_APP_SECRET = os.environ.get("C7_APP_SECRET", "")
+C7_TENANT = os.environ.get("C7_TENANT", "")
+
 # Categories available for assignment
 CATEGORIES = [
     "Shopping",
