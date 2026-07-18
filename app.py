@@ -24,11 +24,22 @@ from flask import (
 import base64
 import secrets
 
+import requests as _requests
+
 import database
 import drive_watcher
 import processor
 import watcher
-from config import GOOGLE_DRIVE_FOLDER_ID, ORIGINALS_DIR, THUMBNAILS_DIR, WATCH_FOLDER, CATEGORIES
+from config import (
+    C7_APP_ID,
+    C7_APP_SECRET,
+    C7_TENANT,
+    GOOGLE_DRIVE_FOLDER_ID,
+    ORIGINALS_DIR,
+    THUMBNAILS_DIR,
+    WATCH_FOLDER,
+    CATEGORIES,
+)
 
 # ── Access control (opt-in via env) ──────────────────────────────────────────
 # APP_PASSWORD:    when set, every request needs HTTP Basic auth (any username).
@@ -138,6 +149,42 @@ def api_agent_summary():
         "monthly_category_totals": database.get_monthly_category_totals(months=3),
         "recent_receipts": database.get_recent_receipts(limit=25),
     })
+
+
+@app.route("/api/agent/c7")
+def api_c7_proxy():
+    """
+    Read-only Commerce7 proxy for Claude's automations.
+
+    GET /api/agent/c7?path=/order&limit=50&...  — forwards to
+    https://api.commerce7.com/v1{path} with this tenant's app credentials.
+    Only GETs, only /v1 paths. All other query params pass through.
+    """
+    if not (C7_APP_ID and C7_APP_SECRET and C7_TENANT):
+        return jsonify({"error": "C7_APP_ID / C7_APP_SECRET / C7_TENANT not configured"}), 503
+
+    path = request.args.get("path", "")
+    if not path.startswith("/") or ".." in path:
+        return jsonify({"error": "path must start with /"}), 400
+
+    params = {k: v for k, v in request.args.items()
+              if k not in ("path", "token", "cb")}
+    try:
+        resp = _requests.get(
+            f"https://api.commerce7.com/v1{path}",
+            params=params,
+            auth=(C7_APP_ID, C7_APP_SECRET),
+            headers={"tenant": C7_TENANT},
+            timeout=30,
+        )
+    except _requests.RequestException as e:
+        return jsonify({"error": f"commerce7 unreachable: {e}"}), 502
+
+    try:
+        body = resp.json()
+    except ValueError:
+        body = {"raw": resp.text[:2000]}
+    return jsonify({"status": resp.status_code, "data": body}), (200 if resp.ok else resp.status_code)
 
 
 @app.route("/api/stats")
