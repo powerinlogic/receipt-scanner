@@ -72,10 +72,10 @@ def _require_auth():
     if not APP_PASSWORD and not AGENT_API_TOKEN:
         return None  # local dev, auth disabled
     header = request.headers.get("Authorization", "")
-    if AGENT_API_TOKEN and header == f"Bearer {AGENT_API_TOKEN}":
+    if AGENT_API_TOKEN and secrets.compare_digest(header, f"Bearer {AGENT_API_TOKEN}"):
         return None
     # Header-less clients (Claude's fetch proxy) may pass the token as a query param
-    if AGENT_API_TOKEN and request.args.get("token", "") == AGENT_API_TOKEN:
+    if AGENT_API_TOKEN and secrets.compare_digest(request.args.get("token", ""), AGENT_API_TOKEN):
         return None
     if APP_PASSWORD and header.startswith("Basic "):
         try:
@@ -94,12 +94,6 @@ app.config["JSON_SORT_KEYS"] = False
 
 
 # ── Startup ──────────────────────────────────────────────────────────────────
-
-@app.before_request
-def _startup():
-    # Flask calls this once per request, guard with a flag
-    pass
-
 
 def _init():
     database.init_db()
