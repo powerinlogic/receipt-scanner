@@ -669,5 +669,9 @@ def api_export_pdf():
 # CREATE-IF-NOT-EXISTS and both watchers no-op when already running.
 _init()
 
+
+# Register the c7 summary route endpoint (separate module).
+import c7_summary_route  # noqa: E402,F401
+
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=False, use_reloader=False)
